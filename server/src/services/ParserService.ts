@@ -1,7 +1,7 @@
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 
-const parseXML = promisify(parseString);
+const parseXML = promisify(parseString) as (xml: string, options?: any) => Promise<any>;
 
 export interface ParsedJob {
   title: string;
@@ -19,7 +19,7 @@ export interface ParsedJob {
 export class ParserService {
   static async parseXMLToJSON(xmlData: string): Promise<ParsedJob[]> {
     try {
-      const result = await parseXML(xmlData, {
+      const result: any = await parseXML(xmlData, {
         explicitArray: false,
         mergeAttrs: true,
       });
