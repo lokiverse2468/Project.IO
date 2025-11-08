@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: job-importer-server
+    env: node
+    buildCommand: cd server && npm install && npm run build
+    startCommand: cd server && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: QUEUE_NAME
+        value: job-import-queue
+      - key: BATCH_SIZE
+        value: 50
+      - key: MAX_CONCURRENCY
+        value: 5
+      - key: JOB_FETCH_INTERVAL
+        value: 0 * * * *
+
+  - type: web
+    name: job-importer-client
+    env: node
+    buildCommand: cd client && npm install && npm run build
+    startCommand: cd client && npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+
+  - type: worker
+    name: job-importer-worker
+    env: node
+    buildCommand: cd server && npm install && npm run build
+    startCommand: cd server && npm run worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: QUEUE_NAME
+        value: job-import-queue
+      - key: MAX_CONCURRENCY
+        value: 5
+
