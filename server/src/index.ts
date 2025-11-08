@@ -12,7 +12,25 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL || process.env.CLIENT_URL || '*',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      process.env.FRONTEND_URL,
+      process.env.CLIENT_URL,
+      'https://project-io-six.vercel.app',
+      'http://localhost:3000',
+    ].filter(Boolean).map(url => url?.replace(/\/$/, '')); // Remove trailing slashes
+    
+    // Check if origin matches (with or without trailing slash)
+    const originWithoutSlash = origin.replace(/\/$/, '');
+    if (allowedOrigins.some(allowed => allowed === origin || allowed === originWithoutSlash)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 app.use(express.json());
