@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import ImportHistory, { ImportHistoryHandle } from '@/components/ImportHistory';
+import InfinityLoader from '@/components/InfinityLoader';
 import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
@@ -115,6 +116,11 @@ export default function Home() {
           <div className="empty-state">
             <h3>No import history yet</h3>
             <p>Kick off the first import to see live processing stats in this dashboard.</p>
+            {triggering && (
+              <div className="inline-loader">
+                <InfinityLoader />
+              </div>
+            )}
             <button
               onClick={handleTriggerImport}
               disabled={triggering}
