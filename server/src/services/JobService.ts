@@ -104,7 +104,6 @@ export class JobService {
 
         const failedCount = failedReasons.length || Math.max(data.jobs.length - (newCount + updatedCount), 0);
 
-
         return {
           new: newCount,
           updated: updatedCount,
@@ -154,7 +153,6 @@ export class JobService {
       const processingTime = Date.now() - importLog.timestamp.getTime();
       importLog.processingTime = processingTime;
       await importLog.save();
-      
     } catch (error) {
       throw error;
     }
@@ -204,24 +202,25 @@ export class JobService {
 
   static async incrementCompletedBatches(importLogId: string): Promise<boolean> {
     try {
-      const importLog = await ImportLog.findById(importLogId);
+      const importLog = await ImportLog.findOneAndUpdate(
+        {
+          _id: importLogId,
+          status: { $nin: ['completed', 'failed'] },
+        },
+        {
+          $inc: { completedBatches: 1 },
+        },
+        {
+          new: true,
+        }
+      );
+
       if (!importLog) {
         return false;
       }
 
-      // If already completed or failed, don't update
-      if (importLog.status === 'completed' || importLog.status === 'failed') {
-        return false;
-      }
-
-      const previousCompleted = importLog.completedBatches || 0;
-      importLog.completedBatches = previousCompleted + 1;
-      await importLog.save();
-
-      // Check if all batches are completed
       const totalBatches = importLog.totalBatches || 0;
       const completedBatches = importLog.completedBatches || 0;
-
 
       if (totalBatches > 0 && completedBatches >= totalBatches) {
         await this.finalizeImportLog(importLogId);

@@ -62,19 +62,41 @@ const startWorker = async () => {
     );
 
     worker.on('completed', (job) => {
+      if (job) {
+      }
     });
 
     worker.on('failed', async (job, err) => {
-      
-      // If job has exhausted all retries, mark the import log appropriately
-      if (job && job.attemptsMade >= (job.opts?.attempts || 3)) {
-        const data: JobImportData = job.data;
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        
-        // Note: We don't mark the entire import as failed here because other batches might succeed
-        // Instead, we rely on the batch completion logic to handle it
-        // However, we could track failed batches and mark as failed if all batches fail
+      if (!job) {
+        return;
       }
+
+      const attemptsAllowed = job.opts?.attempts ?? 1;
+      const attemptsMade = job.attemptsMade ?? 0;
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
+      // Let BullMQ retry until the final attempt has been consumed.
+      if (attemptsMade < attemptsAllowed) {
+        return;
+      }
+
+      const data: JobImportData = job.data;
+
+      // Record the failed batch so the dashboard reflects the real status instead of "processing".
+      await JobService.updateImportLog(data.importLogId, {
+        new: 0,
+        updated: 0,
+        failed: data.jobs.length,
+        failedReasons: [
+          {
+            reason: 'Batch processing failed',
+            error: errorMessage,
+          },
+        ],
+      });
+
+      // Flip the overall import status to failed so it no longer looks stuck in "processing".
+      await JobService.markImportLogAsFailed(data.importLogId, errorMessage);
     });
 
     worker.on('error', (err) => {
@@ -84,9 +106,11 @@ const startWorker = async () => {
     });
 
     worker.on('active', (job) => {
+      if (job) {
+      }
     });
 
-    const port = parseInt(process.env.WORKER_HEALTH_PORT || process.env.PORT || '3101', 10);
+    const port = parseInt(process.env.WORKER_HEALTH_PORT || '3101', 10);
     const server = http.createServer((_, res) => {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/plain');
