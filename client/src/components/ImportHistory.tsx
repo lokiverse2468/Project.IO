@@ -42,6 +42,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 export interface ImportHistoryHandle {
   deleteAll: () => Promise<void>;
+  refresh: (options?: { page?: number; showLoading?: boolean }) => Promise<void>;
 }
 
 interface ImportHistoryProps {
@@ -63,6 +64,8 @@ function ImportHistoryComponent({ onHistoryChange }: ImportHistoryProps, ref: Fo
 
   const fetchHistory = useCallback(
     async (page: number = 1, options: { showLoading?: boolean } = {}) => {
+      const fetchStart = performance.now();
+      console.log(`[ImportHistory] Fetching page ${page} (showLoading=${options.showLoading ?? true})`);
       const { showLoading = true } = options;
       if (showLoading) {
         setLoadingMode(historyLengthRef.current === 0 ? 'initial' : 'overlay');
@@ -86,7 +89,12 @@ function ImportHistoryComponent({ onHistoryChange }: ImportHistoryProps, ref: Fo
         if (onHistoryChange) {
           onHistoryChange(historyData.length > 0);
         }
+        const duration = (performance.now() - fetchStart).toFixed(1);
+        console.log(
+          `[ImportHistory] Page ${page} fetched ${historyData.length} rows in ${duration}ms`
+        );
       } catch (err) {
+        console.error('[ImportHistory] Failed to fetch history', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch import history');
         if (onHistoryChange) {
           onHistoryChange(false);
@@ -204,12 +212,22 @@ function ImportHistoryComponent({ onHistoryChange }: ImportHistoryProps, ref: Fo
     }
   }, [onHistoryChange, fetchHistory]);
 
+  const refreshHistory = useCallback(
+    (options?: { page?: number; showLoading?: boolean }) => {
+      const targetPage = options?.page ?? currentPage;
+      const showLoading = options?.showLoading ?? true;
+      return fetchHistory(targetPage, { showLoading });
+    },
+    [fetchHistory, currentPage]
+  );
+
   useImperativeHandle(
     ref,
     () => ({
       deleteAll: handleDeleteAll,
+      refresh: refreshHistory,
     }),
-    [handleDeleteAll]
+    [handleDeleteAll, refreshHistory]
   );
 
   const renderSkeletonRows = () =>

@@ -11,67 +11,79 @@ export class ImportController {
     }
 
     const urls = FetchService.getJobApiUrls();
+    const results = await Promise.all(urls.map((url) => this.triggerImportForSource(url)));
+    const startedCount = results.filter((result) => result.started).length;
 
-    for (const url of urls) {
-      await this.triggerImportForUrl(url);
-    }
-
-    return { started: true, message: 'Import triggered successfully! Processing jobs...' };
+    return {
+      started: startedCount > 0,
+      message:
+        startedCount === 0
+          ? 'All imports are already running.'
+          : `Scheduled imports for ${startedCount} sources. Processing continues in the background.`,
+    };
   }
 
-  static async triggerImportForUrl(sourceUrl: string): Promise<{ started: boolean; message: string }> {
+  static async triggerImportForSource(sourceUrl: string): Promise<{ started: boolean; message: string }> {
     if (await JobService.hasProcessingImportForSource(sourceUrl)) {
       const message = `Import for ${sourceUrl} is already running. Please wait for it to complete.`;
       return { started: false, message };
     }
 
-    try {
-      const xmlData = await FetchService.fetchJobsFromUrl(sourceUrl);
-      const jobs = await ParserService.parseXMLToJSON(xmlData);
+    const importLog = await JobService.createImportLog(sourceUrl, 0, 0);
+    console.log(`[ImportController] Scheduled background import for ${sourceUrl} (log ${importLog._id})`);
 
-      if (jobs.length === 0) {
-        const emptyLog = await JobService.createImportLog(sourceUrl, 0, 0);
-        await JobService.finalizeImportLog(emptyLog._id.toString());
-        return { started: true, message: `No jobs found for ${sourceUrl}` };
-      }
-
-      // Create import log first with estimated batch count
-      const estimatedBatchCount = Math.ceil(jobs.length / parseInt(process.env.BATCH_SIZE || '50'));
-      const importLog = await JobService.createImportLog(sourceUrl, jobs.length, estimatedBatchCount);
-
-      // Queue jobs and get actual batch count
-      const actualBatchCount = await queueService.addJobImport({
-        sourceUrl,
-        jobs,
-        importLogId: importLog._id.toString(),
+    setImmediate(() => {
+      this.executeImportForUrl(sourceUrl, importLog._id.toString()).catch(async (error) => {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`[ImportController] Background import failed for ${sourceUrl}: ${errorMessage}`);
+        await JobService.markImportLogAsFailed(importLog._id.toString(), errorMessage);
       });
+    });
 
-      // Update import log with actual batch count if different
-      if (actualBatchCount !== estimatedBatchCount) {
-        await JobService.updateImportLogBatchCount(importLog._id.toString(), actualBatchCount);
-      }
+    return { started: true, message: `Import scheduled for ${sourceUrl}` };
+  }
 
-      // If no batches were created (empty jobs array edge case), mark as completed immediately
-      if (actualBatchCount === 0) {
-        await JobService.finalizeImportLog(importLog._id.toString());
-      }
+  private static async executeImportForUrl(sourceUrl: string, importLogId: string): Promise<void> {
+    const overallStart = Date.now();
+    console.log(`[ImportController] Import start for ${sourceUrl}`);
 
-      // Log queue status after queuing
-      const queueStats = await queueService.getQueueStats();
-      
-      if (queueStats.waiting > 0 && queueStats.active === 0) {
-        return {
-          started: true,
-          message: `Import triggered for ${sourceUrl}. Warning: queue has waiting jobs but no active worker.`,
-        };
-      }
+    const fetchStart = Date.now();
+    const xmlData = await FetchService.fetchJobsFromUrl(sourceUrl);
+    console.log(`[ImportController] ${sourceUrl} fetch stage took ${Date.now() - fetchStart}ms`);
 
-      return { started: true, message: `Import triggered for ${sourceUrl}` };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await JobService.createFailedImportLog(sourceUrl, errorMessage);
-      return { started: false, message: `Failed to import from ${sourceUrl}: ${errorMessage}` };
+    const parseStart = Date.now();
+    const jobs = await ParserService.parseXMLToJSON(xmlData);
+    console.log(`[ImportController] ${sourceUrl} parsed ${jobs.length} jobs in ${Date.now() - parseStart}ms`);
+
+    if (jobs.length === 0) {
+      console.log(`[ImportController] ${sourceUrl} returned 0 jobs. Finalizing log.`);
+      await JobService.initializeImportLog(importLogId, 0, 0);
+      await JobService.finalizeImportLog(importLogId);
+      return;
     }
+
+    const estimatedBatchCount = Math.ceil(jobs.length / parseInt(process.env.BATCH_SIZE || '50'));
+    await JobService.initializeImportLog(importLogId, jobs.length, estimatedBatchCount);
+
+    const queueStart = Date.now();
+    const actualBatchCount = await queueService.addJobImport({
+      sourceUrl,
+      jobs,
+      importLogId,
+    });
+    console.log(
+      `[ImportController] ${sourceUrl} queued ${actualBatchCount} batches in ${Date.now() - queueStart}ms`
+    );
+
+    if (actualBatchCount !== estimatedBatchCount) {
+      await JobService.updateImportLogBatchCount(importLogId, actualBatchCount);
+    }
+
+    if (actualBatchCount === 0) {
+      await JobService.finalizeImportLog(importLogId);
+    }
+
+    console.log(`[ImportController] ${sourceUrl} scheduling completed in ${Date.now() - overallStart}ms`);
   }
 }
 

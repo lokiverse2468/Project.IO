@@ -2,6 +2,8 @@ import axios from 'axios';
 
 export class FetchService {
   static async fetchJobsFromUrl(url: string): Promise<string> {
+    const fetchStart = Date.now();
+    console.log(`[FetchService] [${url}] Fetch started`);
     try {
       const response = await axios.get(url, {
         timeout: 30000,
@@ -11,21 +13,28 @@ export class FetchService {
         },
         validateStatus: (status) => status < 500, // Accept 4xx errors but not 5xx
       });
+      const duration = Date.now() - fetchStart;
       
       if (response.status >= 400) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+      const payloadSize = typeof response.data === 'string' ? response.data.length : JSON.stringify(response.data).length;
+      console.log(
+        `[FetchService] [${url}] Fetch completed in ${duration}ms (status ${response.status}, bytes ~${payloadSize})`
+      );
       return response.data;
     } catch (error) {
+      const duration = Date.now() - fetchStart;
       if (axios.isAxiosError(error)) {
         const errorMessage = error.response 
           ? `HTTP ${error.response.status}: ${error.response.statusText}`
           : error.request
           ? 'Network error: No response received'
           : error.message;
+        console.error(`[FetchService] [${url}] Fetch failed in ${duration}ms: ${errorMessage}`);
         throw new Error(`Failed to fetch from ${url}: ${errorMessage}`);
       }
+      console.error(`[FetchService] [${url}] Fetch failed in ${duration}ms: ${error instanceof Error ? error.message : error}`);
       throw error;
     }
   }

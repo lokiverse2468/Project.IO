@@ -17,7 +17,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
 router.post('/trigger/:url', async (req: Request, res: Response) => {
   try {
     const url = decodeURIComponent(req.params.url);
-    const result = await ImportController.triggerImportForUrl(url);
+    const result = await ImportController.triggerImportForSource(url);
     res.json({ message: result.message, started: result.started });
   } catch (error) {
     res.status(500).json({

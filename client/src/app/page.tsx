@@ -38,20 +38,25 @@ export default function Home() {
   }, []);
 
   const handleTriggerImport = async () => {
+    const triggerStart = performance.now();
     try {
       setTriggering(true);
       setMessage(null);
       const response = await axios.post(`${API_URL}/import/trigger`);
       const serverMessage = response.data?.message || 'Import triggered';
       setMessage(serverMessage);
+      console.log(
+        `[Home] Trigger import API completed in ${(performance.now() - triggerStart).toFixed(1)}ms`
+      );
 
       if (response.data?.started) {
         setImportTriggered(true);
         setHasImports(true);
+        await historyRef.current?.refresh({ page: 1, showLoading: true });
         setTimeout(async () => {
           await checkForImports();
           setMessage(null);
-        }, 2000);
+        }, 1000);
       } else {
         setImportTriggered(false);
       }

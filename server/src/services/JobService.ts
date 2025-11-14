@@ -188,6 +188,20 @@ export class JobService {
     return importLog;
   }
 
+  static async initializeImportLog(importLogId: string, total: number, totalBatches: number): Promise<void> {
+    try {
+      const importLog = await ImportLog.findById(importLogId);
+      if (!importLog) {
+        throw new Error(`Import log ${importLogId} not found`);
+      }
+      importLog.total = total;
+      importLog.totalBatches = totalBatches;
+      await importLog.save();
+    } catch (error) {
+      console.error(`[JobService] Failed to initialize import log ${importLogId}`, error);
+    }
+  }
+
   static async createFailedImportLog(sourceUrl: string, errorMessage: string): Promise<IImportLog> {
     const fileName = this.extractFileNameFromUrl(sourceUrl);
     const importLog = new ImportLog({
