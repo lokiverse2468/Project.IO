@@ -86,7 +86,7 @@ const startWorker = async () => {
     worker.on('active', (job) => {
     });
 
-    const port = parseInt(process.env.PORT || '10000', 10);
+    const port = parseInt(process.env.WORKER_HEALTH_PORT || process.env.PORT || '3101', 10);
     const server = http.createServer((_, res) => {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/plain');
