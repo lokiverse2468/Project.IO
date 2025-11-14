@@ -1,4 +1,5 @@
 import { Worker } from 'bullmq';
+import http from 'http';
 import dotenv from 'dotenv';
 import { connectRedis, getRedisClient } from '../config/redis';
 import { connectDatabase } from '../config/database';
@@ -84,7 +85,16 @@ const startWorker = async () => {
 
     worker.on('active', (job) => {
     });
-    
+
+    const port = parseInt(process.env.PORT || '10000', 10);
+    const server = http.createServer((_, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain');
+      res.end('Worker running');
+    });
+
+    server.listen(port, () => {
+    });
   } catch (error) {
     process.exit(1);
   }
