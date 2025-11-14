@@ -68,24 +68,17 @@ export const connectRedis = async (): Promise<void> => {
     });
 
     redisClient.on('connect', () => {
-      console.log('Redis connected successfully');
     });
 
     redisClient.on('ready', () => {
-      console.log('Redis is ready');
     });
 
     redisClient.on('error', (error: Error) => {
-      console.error('Redis connection error:', error.message);
-      console.warn('⚠️  Queue functionality will not work without Redis');
     });
 
     // Test connection
     await redisClient.ping();
   } catch (error) {
-    console.error('Failed to connect to Redis:', error instanceof Error ? error.message : error);
-    console.warn('⚠️  Server will start but queue functionality will not work');
-    console.warn('⚠️  Please install and start Redis, or use Redis Cloud');
     redisClient = null;
   }
 };

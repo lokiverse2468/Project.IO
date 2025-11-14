@@ -1,4 +1,4 @@
-import { Queue } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { getRedisClient } from '../config/redis';
 
 export interface JobImportData {
@@ -32,7 +32,7 @@ export class QueueService {
   }
 
   async addJobImport(data: JobImportData): Promise<number> {
-    const batchSize = parseInt(process.env.BATCH_SIZE || '50');
+    const batchSize = this.getBatchSizeForSource(data.sourceUrl);
     const batches: Array<Promise<any>> = [];
     let batchCount = 0;
     const queue = this.getQueue();
@@ -62,6 +62,17 @@ export class QueueService {
     return batchCount;
   }
 
+  private getBatchSizeForSource(sourceUrl: string): number {
+    const defaultBatchSize = parseInt(process.env.BATCH_SIZE || '100');
+    const largeFeedBatchSize = parseInt(process.env.LARGE_FEED_BATCH_SIZE || '400');
+
+    if (sourceUrl.includes('higheredjobs.com')) {
+      return largeFeedBatchSize;
+    }
+
+    return defaultBatchSize;
+  }
+
   async getQueueStats() {
     const queue = this.getQueue();
     const [waiting, active, completed, failed] = await Promise.all([
@@ -77,6 +88,42 @@ export class QueueService {
       completed,
       failed,
     };
+  }
+
+  async removeJobsByImportLogId(importLogId: string): Promise<number> {
+    const queue = this.getQueue();
+    const statuses = ['waiting', 'delayed', 'paused', 'active', 'completed', 'failed'] as const;
+    let removed = 0;
+
+    const jobs = await queue.getJobs(statuses, 0, -1, false);
+
+    for (const job of jobs) {
+      if (job?.data?.importLogId === importLogId) {
+        try {
+          await job.remove();
+          removed++;
+        } catch (error) {
+        }
+      }
+    }
+
+    if (removed > 0) {
+    }
+
+    return removed;
+  }
+
+  async clearAllJobs(): Promise<void> {
+    const queue = this.getQueue();
+
+    await queue.drain(true);
+    await Promise.all([
+      queue.clean(0, 0, 'completed'),
+      queue.clean(0, 0, 'failed'),
+      queue.clean(0, 0, 'waiting'),
+      queue.clean(0, 0, 'delayed'),
+    ]);
+
   }
 }
 

@@ -17,10 +17,19 @@ export const connectDatabase = async (): Promise<void> => {
       }
     }
     
-    await mongoose.connect(connectionUri);
-    console.log('MongoDB connected successfully');
+    // Optimize connection pool for better performance
+    const connectionOptions = {
+      maxPoolSize: 10, // Maximum number of connections in the pool
+      minPoolSize: 2, // Minimum number of connections to maintain
+      serverSelectionTimeoutMS: 5000, // How long to try selecting a server
+      socketTimeoutMS: 45000, // How long a send or receive on a socket can take before timeout
+    };
+    
+    // Disable mongoose buffering at the connection level
+    mongoose.set('bufferCommands', false);
+    
+    await mongoose.connect(connectionUri, connectionOptions);
   } catch (error) {
-    console.error('MongoDB connection error:', error);
     throw error;
   }
 };

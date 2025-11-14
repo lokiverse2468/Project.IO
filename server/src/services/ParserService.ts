@@ -19,9 +19,14 @@ export interface ParsedJob {
 export class ParserService {
   static async parseXMLToJSON(xmlData: string): Promise<ParsedJob[]> {
     try {
-      const result: any = await parseXML(xmlData, {
+      const sanitizedXml = this.sanitizeXml(xmlData);
+      const lowerCase = (name: string) => name.toLowerCase();
+      const result: any = await parseXML(sanitizedXml, {
         explicitArray: false,
         mergeAttrs: true,
+        strict: false, // tolerate slightly malformed feeds
+        tagNameProcessors: [lowerCase],
+        attrNameProcessors: [lowerCase],
       });
 
       const jobs: ParsedJob[] = [];
@@ -132,6 +137,15 @@ export class ParserService {
 
   private static generateId(id: string): string {
     return Buffer.from(id).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 50);
+  }
+
+  private static sanitizeXml(xml: string): string {
+    if (!xml) {
+      return xml;
+    }
+
+    // Replace stray ampersands that are not part of valid entities
+    return xml.replace(/&(?![#a-zA-Z0-9]+;)/g, '&amp;');
   }
 }
 

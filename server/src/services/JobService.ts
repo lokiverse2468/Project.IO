@@ -1,4 +1,5 @@
 import Job, { IJob } from '../models/Job';
+import { BulkWriteResult } from 'mongodb';
 import ImportLog, { IImportLog } from '../models/ImportLog';
 import { JobImportData } from './QueueService';
 
@@ -50,46 +51,80 @@ export class JobService {
   static async processJobBatch(
     data: JobImportData
   ): Promise<{ new: number; updated: number; failed: number; failedReasons: Array<{ jobId?: string; reason: string; error?: string }> }> {
-    const result = {
-      new: 0,
-      updated: 0,
-      failed: 0,
-      failedReasons: [] as Array<{ jobId?: string; reason: string; error?: string }>,
-    };
+    const operations = data.jobs.map((jobData) => {
+      const updateDoc = {
+        title: jobData.title,
+        company: jobData.company,
+        location: jobData.location,
+        description: jobData.description,
+        url: jobData.url,
+        category: jobData.category,
+        type: jobData.type,
+        region: jobData.region,
+        externalId: jobData.externalId,
+        sourceUrl: data.sourceUrl,
+        publishedDate: jobData.publishedDate,
+      };
 
-    for (const jobData of data.jobs) {
-      try {
-        const { isNew } = await this.createOrUpdateJob({
-          ...jobData,
-          sourceUrl: data.sourceUrl,
-        });
+      return {
+        updateOne: {
+          filter: { externalId: jobData.externalId, sourceUrl: data.sourceUrl },
+          update: { $set: updateDoc },
+          upsert: true,
+        },
+      };
+    });
 
-        if (isNew) {
-          result.new++;
-        } else {
-          result.updated++;
-        }
-      } catch (error) {
-        result.failed++;
-        result.failedReasons.push({
-          jobId: jobData.externalId,
-          reason: 'Database error',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+    try {
+      const bulkResult = await Job.bulkWrite(operations, { ordered: false });
+      const newCount = bulkResult.upsertedCount || 0;
+      const updatedCount = bulkResult.matchedCount || 0;
+      const processed = newCount + updatedCount;
+      const failedCount = Math.max(data.jobs.length - processed, 0);
+
+      return {
+        new: newCount,
+        updated: updatedCount,
+        failed: failedCount,
+        failedReasons: [],
+      };
+    } catch (error) {
+      const err = error as any;
+
+      if (err?.writeErrors) {
+        const bulkResult: BulkWriteResult | undefined = err.result;
+        const newCount = bulkResult?.upsertedCount || 0;
+        const updatedCount = bulkResult?.matchedCount || 0;
+
+        const failedReasons = err.writeErrors.map((writeErr: any) => ({
+          jobId: writeErr?.op?.updateOne?.filter?.externalId,
+          reason: 'Bulk write error',
+          error: writeErr?.errmsg || writeErr?.code?.toString() || 'Unknown error',
+        }));
+
+        const failedCount = failedReasons.length || Math.max(data.jobs.length - (newCount + updatedCount), 0);
+
+
+        return {
+          new: newCount,
+          updated: updatedCount,
+          failed: failedCount,
+          failedReasons,
+        };
       }
-    }
 
-    return result;
+      throw error;
+    }
   }
 
   static async updateImportLog(
     importLogId: string,
     stats: { new: number; updated: number; failed: number; failedReasons: Array<{ jobId?: string; reason: string; error?: string }> }
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const importLog = await ImportLog.findById(importLogId);
       if (!importLog) {
-        throw new Error(`Import log ${importLogId} not found`);
+        return false;
       }
 
       importLog.new += stats.new;
@@ -97,8 +132,9 @@ export class JobService {
       importLog.failed += stats.failed;
       importLog.failedReasons = importLog.failedReasons.concat(stats.failedReasons);
       await importLog.save();
+      return true;
     } catch (error) {
-      console.error('Failed to update import log:', error);
+      return false;
     }
   }
 
@@ -109,12 +145,18 @@ export class JobService {
         throw new Error(`Import log ${importLogId} not found`);
       }
 
+      // Double-check status before finalizing
+      if (importLog.status === 'completed') {
+        return;
+      }
+
       importLog.status = 'completed';
       const processingTime = Date.now() - importLog.timestamp.getTime();
       importLog.processingTime = processingTime;
       await importLog.save();
+      
     } catch (error) {
-      console.error('Failed to finalize import log:', error);
+      throw error;
     }
   }
 
@@ -136,6 +178,30 @@ export class JobService {
     return importLog;
   }
 
+  static async createFailedImportLog(sourceUrl: string, errorMessage: string): Promise<IImportLog> {
+    const fileName = this.extractFileNameFromUrl(sourceUrl);
+    const importLog = new ImportLog({
+      fileName,
+      sourceUrl,
+      total: 0,
+      new: 0,
+      updated: 0,
+      failed: 0,
+      failedReasons: [
+        {
+          reason: 'Import initialization failed',
+          error: errorMessage,
+        },
+      ],
+      status: 'failed',
+      totalBatches: 0,
+      completedBatches: 0,
+      processingTime: 0,
+    });
+    await importLog.save();
+    return importLog;
+  }
+
   static async incrementCompletedBatches(importLogId: string): Promise<boolean> {
     try {
       const importLog = await ImportLog.findById(importLogId);
@@ -143,31 +209,196 @@ export class JobService {
         return false;
       }
 
-      importLog.completedBatches = (importLog.completedBatches || 0) + 1;
+      // If already completed or failed, don't update
+      if (importLog.status === 'completed' || importLog.status === 'failed') {
+        return false;
+      }
+
+      const previousCompleted = importLog.completedBatches || 0;
+      importLog.completedBatches = previousCompleted + 1;
       await importLog.save();
 
-      if (importLog.totalBatches && importLog.completedBatches >= importLog.totalBatches) {
+      // Check if all batches are completed
+      const totalBatches = importLog.totalBatches || 0;
+      const completedBatches = importLog.completedBatches || 0;
+
+
+      if (totalBatches > 0 && completedBatches >= totalBatches) {
         await this.finalizeImportLog(importLogId);
         return true;
       }
 
       return false;
     } catch (error) {
-      console.error('Failed to increment completed batches:', error);
       return false;
     }
   }
 
+  static async markImportLogAsFailed(importLogId: string, error?: string): Promise<void> {
+    try {
+      const importLog = await ImportLog.findById(importLogId);
+      if (!importLog) {
+        throw new Error(`Import log ${importLogId} not found`);
+      }
+
+      // Only update if still processing
+      if (importLog.status === 'processing') {
+        importLog.status = 'failed';
+        const processingTime = Date.now() - importLog.timestamp.getTime();
+        importLog.processingTime = processingTime;
+        
+        if (error) {
+          importLog.failedReasons.push({
+            reason: 'Batch processing failed',
+            error: error,
+          });
+        }
+        
+        await importLog.save();
+      }
+    } catch (error) {
+    }
+  }
+
+  static async updateImportLogBatchCount(importLogId: string, totalBatches: number): Promise<void> {
+    try {
+      const importLog = await ImportLog.findById(importLogId);
+      if (!importLog) {
+        throw new Error(`Import log ${importLogId} not found`);
+      }
+
+      // Only update if status is still processing
+      if (importLog.status !== 'processing') {
+        return;
+      }
+
+      const currentCompletedBatches = importLog.completedBatches || 0;
+      importLog.totalBatches = totalBatches;
+      await importLog.save();
+      
+      // Check if all batches are already completed (race condition handling)
+      // Reload to get the latest state
+      const updatedImportLog = await ImportLog.findById(importLogId);
+      if (updatedImportLog && updatedImportLog.status === 'processing') {
+        const completedBatches = updatedImportLog.completedBatches || 0;
+        if (totalBatches > 0 && completedBatches >= totalBatches) {
+          await this.finalizeImportLog(importLogId);
+        }
+      }
+    } catch (error) {
+    }
+  }
+
   static async getImportHistory(limit: number = 50, skip: number = 0) {
-    return ImportLog.find()
+    const queryStartTime = Date.now();
+    
+    // Optimized query with explicit field selection and lean() for faster results
+    // Using hint to ensure index usage
+    const result = await ImportLog.find()
       .sort({ timestamp: -1 })
       .limit(limit)
       .skip(skip)
-      .lean();
+      .lean() // Returns plain JavaScript objects instead of Mongoose documents (much faster)
+      .select('_id fileName sourceUrl timestamp total new updated failed failedReasons status processingTime totalBatches completedBatches')
+      .hint({ timestamp: -1 }); // Force index usage
+    
+    const queryEndTime = Date.now();
+    
+    return result;
   }
 
   static async getImportHistoryCount(): Promise<number> {
-    return ImportLog.countDocuments();
+    const countStartTime = Date.now();
+    
+    // Use estimatedDocumentCount for faster results (approximate but much faster)
+    // Falls back to countDocuments if collection is small
+    let count: number;
+    try {
+      // Try estimated count first (much faster for large collections)
+      const estimatedCount = await ImportLog.estimatedDocumentCount();
+      if (estimatedCount < 1000) {
+        // For small collections, get exact count
+        count = await ImportLog.countDocuments();
+      } else {
+        count = estimatedCount;
+      }
+    } catch (error) {
+      // Fallback to exact count if estimated fails
+      count = await ImportLog.countDocuments();
+    }
+    
+    const countEndTime = Date.now();
+    
+    return count;
+  }
+
+  static async deleteImportLog(importLogId: string): Promise<boolean> {
+    try {
+      const result = await ImportLog.findByIdAndDelete(importLogId);
+      return !!result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  static async deleteAllImportLogs(): Promise<number> {
+    try {
+      const result = await ImportLog.deleteMany({});
+      return result.deletedCount || 0;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  static async hasProcessingImports(): Promise<boolean> {
+    const existing = await ImportLog.exists({ status: 'processing' });
+    return !!existing;
+  }
+
+  static async hasProcessingImportForSource(sourceUrl: string): Promise<boolean> {
+    const existing = await ImportLog.exists({ status: 'processing', sourceUrl });
+    return !!existing;
+  }
+
+  // Method to check and fix stuck processing statuses
+  static async checkAndFixStuckImports(): Promise<void> {
+    try {
+      const { queueService } = await import('./QueueService');
+      const queueStats = await queueService.getQueueStats();
+      
+      
+      // Warn if there are waiting jobs but no active processing (worker might not be running)
+      if (queueStats.waiting > 0 && queueStats.active === 0) {
+      }
+
+      const stuckImports = await ImportLog.find({
+        status: 'processing',
+        timestamp: { $lt: new Date(Date.now() - 2 * 60 * 1000) }, // Older than 2 minutes
+      });
+
+      for (const importLog of stuckImports) {
+        const totalBatches = importLog.totalBatches || 0;
+        const completedBatches = importLog.completedBatches || 0;
+
+
+        // If all batches should be completed, finalize it
+        if (totalBatches > 0 && completedBatches >= totalBatches) {
+          await this.finalizeImportLog(importLog._id.toString());
+        } else if (totalBatches === 0 && completedBatches === 0) {
+          // If no batches were created, mark as completed
+          await this.finalizeImportLog(importLog._id.toString());
+        } else if (completedBatches === 0 && totalBatches > 0) {
+          // If no batches have been processed and there are jobs waiting, worker might not be running
+          const ageMinutes = Math.floor((Date.now() - importLog.timestamp.getTime()) / 60000);
+          if (ageMinutes > 5) {
+          }
+        }
+      }
+
+      if (stuckImports.length > 0) {
+      }
+    } catch (error) {
+    }
   }
 
   private static extractFileNameFromUrl(url: string): string {

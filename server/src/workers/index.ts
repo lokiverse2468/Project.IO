@@ -8,7 +8,7 @@ import { JobImportData } from '../services/QueueService';
 dotenv.config();
 
 const queueName = process.env.QUEUE_NAME || 'job-import-queue';
-const maxConcurrency = parseInt(process.env.MAX_CONCURRENCY || '5');
+const maxConcurrency = parseInt(process.env.MAX_CONCURRENCY || '10');
 
 const startWorker = async () => {
   try {
@@ -23,15 +23,29 @@ const startWorker = async () => {
       queueName,
       async (job) => {
         const data: JobImportData = job.data;
+        const batchStartTime = Date.now();
         
-        console.log(`Processing batch of ${data.jobs.length} jobs for ${data.sourceUrl}`);
+        try {
 
-        const stats = await JobService.processJobBatch(data);
-        
-        await JobService.updateImportLog(data.importLogId, stats);
-        await JobService.incrementCompletedBatches(data.importLogId);
+          const stats = await JobService.processJobBatch(data);
+          
+          const logUpdated = await JobService.updateImportLog(data.importLogId, stats);
+          if (!logUpdated) {
+            return stats;
+          }
 
-        return stats;
+          const isCompleted = await JobService.incrementCompletedBatches(data.importLogId);
+
+          const batchEndTime = Date.now();
+
+          if (isCompleted) {
+          }
+
+          return stats;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          throw error; // Re-throw to let BullMQ handle retries
+        }
       },
       {
         connection: getRedisClient(),
@@ -47,20 +61,31 @@ const startWorker = async () => {
     );
 
     worker.on('completed', (job) => {
-      console.log(`Job ${job.id} completed`);
     });
 
-    worker.on('failed', (job, err) => {
-      console.error(`Job ${job?.id} failed:`, err);
+    worker.on('failed', async (job, err) => {
+      
+      // If job has exhausted all retries, mark the import log appropriately
+      if (job && job.attemptsMade >= (job.opts?.attempts || 3)) {
+        const data: JobImportData = job.data;
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        
+        // Note: We don't mark the entire import as failed here because other batches might succeed
+        // Instead, we rely on the batch completion logic to handle it
+        // However, we could track failed batches and mark as failed if all batches fail
+      }
     });
 
     worker.on('error', (err) => {
-      console.error('Worker error:', err);
+    });
+
+    worker.on('ready', () => {
+    });
+
+    worker.on('active', (job) => {
     });
     
-    console.log(`Worker started with concurrency: ${maxConcurrency}`);
   } catch (error) {
-    console.error('Failed to start worker:', error);
     process.exit(1);
   }
 };

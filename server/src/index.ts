@@ -44,16 +44,17 @@ const startServer = async () => {
     try {
       await connectRedis();
     } catch (error) {
-      console.warn('Redis connection failed, but server will continue...');
     }
     
-    startJobFetcherCron();
+    const enableCron = process.env.ENABLE_JOB_FETCH_CRON?.toLowerCase() === 'true';
+    if (enableCron) {
+      startJobFetcherCron();
+    } else {
+    }
     
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
     process.exit(1);
   }
 };
