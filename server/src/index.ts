@@ -46,8 +46,14 @@ const startServer = async () => {
     } catch (error) {
     }
     
-    const enableCron = process.env.ENABLE_JOB_FETCH_CRON?.toLowerCase() === 'true';
+    const enableCron = (process.env.ENABLE_JOB_FETCH_CRON ?? 'true').toLowerCase() === 'true';
     if (enableCron) {
+      const cronExpression = process.env.JOB_FETCH_INTERVAL || '0 * * * *';
+      /**
+       * Automatically fetch jobs on a schedule so new postings appear without
+       * requiring a manual trigger. The interval is controlled via
+       * JOB_FETCH_INTERVAL (cron syntax).
+       */
       startJobFetcherCron();
     } else {
     }

@@ -47,11 +47,24 @@ code {
   gap: 24px;
 }
 
+@media (max-width: 1024px) {
+  .app-shell {
+    padding: 32px 24px 48px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 24px 16px 36px;
+  }
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
   gap: 24px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .page-header__title {
@@ -73,9 +86,21 @@ code {
   color: var(--text);
 }
 
+@media (max-width: 768px) {
+  .page-header__title h1 {
+    font-size: 24px;
+  }
+}
+
 .page-header__title p {
   color: var(--text-muted);
   font-size: 15px;
+}
+
+@media (max-width: 768px) {
+  .page-header__title p {
+    font-size: 14px;
+  }
 }
 
 .header-actions {
@@ -84,6 +109,18 @@ code {
   justify-content: flex-end;
   gap: 12px;
   align-items: center;
+}
+
+@media (max-width: 640px) {
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .header-actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
 }
 
 .button {
@@ -210,6 +247,12 @@ code {
   overflow-x: auto;
 }
 
+@media (max-width: 640px) {
+  table {
+    min-width: 640px;
+  }
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -303,6 +346,17 @@ th:last-child {
 .pagination button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .pagination {
+    flex-direction: column;
+  }
+
+  .pagination button {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .timestamp {

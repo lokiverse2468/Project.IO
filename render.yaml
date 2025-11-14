@@ -9,6 +9,8 @@ services:
         value: production
       - key: PORT
         value: 3001
+      - key: ENABLE_JOB_FETCH_CRON
+        value: "true"
       - key: MONGODB_URI
         sync: false
       - key: REDIS_URL
