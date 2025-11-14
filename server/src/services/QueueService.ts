@@ -1,4 +1,4 @@
-import { Job, Queue } from 'bullmq';
+import { Job, JobType, Queue } from 'bullmq';
 import { getRedisClient } from '../config/redis';
 
 export interface JobImportData {
@@ -92,7 +92,7 @@ export class QueueService {
 
   async removeJobsByImportLogId(importLogId: string): Promise<number> {
     const queue = this.getQueue();
-    const statuses = ['waiting', 'delayed', 'paused', 'active', 'completed', 'failed'] as const;
+    const statuses: JobType[] = ['waiting', 'delayed', 'paused', 'active', 'completed', 'failed'];
     let removed = 0;
 
     const jobs = await queue.getJobs(statuses, 0, -1, false);
