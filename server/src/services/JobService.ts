@@ -121,17 +121,29 @@ export class JobService {
     stats: { new: number; updated: number; failed: number; failedReasons: Array<{ jobId?: string; reason: string; error?: string }> }
   ): Promise<boolean> {
     try {
-      const importLog = await ImportLog.findById(importLogId);
-      if (!importLog) {
-        return false;
+      const update: Record<string, any> = {
+        $inc: {
+          new: stats.new,
+          updated: stats.updated,
+          failed: stats.failed,
+        },
+      };
+
+      if (stats.failedReasons.length > 0) {
+        update.$push = {
+          failedReasons: {
+            $each: stats.failedReasons,
+          },
+        };
       }
 
-      importLog.new += stats.new;
-      importLog.updated += stats.updated;
-      importLog.failed += stats.failed;
-      importLog.failedReasons = importLog.failedReasons.concat(stats.failedReasons);
-      await importLog.save();
-      return true;
+      const updatedLog = await ImportLog.findOneAndUpdate(
+        { _id: importLogId },
+        update,
+        { new: true }
+      );
+
+      return !!updatedLog;
     } catch (error) {
       return false;
     }

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import ImportHistory from '@/components/ImportHistory';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import ImportHistory, { ImportHistoryHandle } from '@/components/ImportHistory';
 import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
@@ -11,22 +11,28 @@ export default function Home() {
   const [message, setMessage] = useState<string | null>(null);
   const [hasImports, setHasImports] = useState(false);
   const [importTriggered, setImportTriggered] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const historyRef = useRef<ImportHistoryHandle | null>(null);
 
-  // Check if there are any imports in the database (optimized - only fetch 1 item)
+  const messageIntent = useMemo(() => {
+    if (!message) {
+      return 'info';
+    }
+    return message.toLowerCase().includes('success') ? 'success' : 'error';
+  }, [message]);
+
   const checkForImports = async () => {
-    const checkStartTime = performance.now();
     try {
       const response = await axios.get(`${API_URL}/history`, {
         params: { page: 1, limit: 1 },
       });
       setHasImports(response.data.data && response.data.data.length > 0);
-      const checkEndTime = performance.now();
     } catch (error) {
+      // Swallow error; UI already surfaces failures when fetching the table
     }
   };
 
   useEffect(() => {
-    // Check on initial load if there are any imports
     checkForImports();
   }, []);
 
@@ -56,7 +62,6 @@ export default function Home() {
     }
   };
 
-  // Callback from ImportHistory when data is deleted
   const handleHistoryChange = (hasData: boolean) => {
     setHasImports(hasData);
     if (!hasData) {
@@ -65,55 +70,60 @@ export default function Home() {
   };
 
   return (
-    <main style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ fontSize: '18px', fontWeight: 'normal', color: '#000000', margin: 0 }}>
-          Job Import History
-        </h1>
-        <button
-          onClick={handleTriggerImport}
-          disabled={triggering}
-          style={{
-            padding: '8px 16px',
-            fontSize: '11px',
-            border: '1px solid #000000',
-            backgroundColor: triggering ? '#f5f5f5' : '#ffffff',
-            color: triggering ? '#999999' : '#000000',
-            cursor: triggering ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {triggering ? 'Triggering...' : 'Trigger Import'}
-        </button>
-      </div>
+    <main className="app-shell">
+      <header className="page-header">
+        <div className="page-header__title">
+          <span className="eyebrow">Operations</span>
+          <h1>Job Import History</h1>
+          <p>Monitor every feed run, trigger new imports, and keep stakeholders updated.</p>
+        </div>
+        <div className="header-actions">
+          <button
+            onClick={handleTriggerImport}
+            disabled={triggering}
+            className="button button--primary"
+          >
+            {triggering ? 'Triggering…' : 'Trigger Import'}
+          </button>
+          {hasImports && (
+            <button
+              onClick={async () => {
+                if (!historyRef.current) return;
+                setDeletingAll(true);
+                await historyRef.current.deleteAll();
+                setDeletingAll(false);
+              }}
+              disabled={deletingAll}
+              className="button button--danger"
+            >
+              {deletingAll ? 'Deleting…' : 'Delete All'}
+            </button>
+          )}
+        </div>
+      </header>
+
       {message && (
-        <div
-          style={{
-            padding: '8px 16px',
-            marginBottom: '20px',
-            fontSize: '11px',
-            backgroundColor: message.includes('successfully') ? '#e8f5e9' : '#ffebee',
-            color: message.includes('successfully') ? '#2e7d32' : '#c62828',
-            border: `1px solid ${message.includes('successfully') ? '#4caf50' : '#ef5350'}`,
-          }}
-        >
+        <div className={`alert ${messageIntent === 'success' ? 'alert--success' : 'alert--error'}`}>
           {message}
         </div>
       )}
+
       {hasImports || importTriggered ? (
-        <ImportHistory onHistoryChange={handleHistoryChange} />
+        <ImportHistory ref={historyRef} onHistoryChange={handleHistoryChange} />
       ) : (
-        <div
-          style={{
-            padding: '40px 20px',
-            textAlign: 'center',
-            fontSize: '12px',
-            color: '#666666',
-            border: '1px solid #e0e0e0',
-            backgroundColor: '#fafafa',
-          }}
-        >
-          No import history found. Click "Trigger Import" to start importing jobs.
-        </div>
+        <section className="card">
+          <div className="empty-state">
+            <h3>No import history yet</h3>
+            <p>Kick off the first import to see live processing stats in this dashboard.</p>
+            <button
+              onClick={handleTriggerImport}
+              disabled={triggering}
+              className="button button--ghost"
+            >
+              {triggering ? 'Triggering…' : 'Start Import'}
+            </button>
+          </div>
+        </section>
       )}
     </main>
   );

@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  forwardRef,
+  useImperativeHandle,
+  ForwardedRef,
+} from 'react';
 import axios from 'axios';
 
 interface ImportLog {
@@ -32,72 +40,75 @@ interface Pagination {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
+export interface ImportHistoryHandle {
+  deleteAll: () => Promise<void>;
+}
+
 interface ImportHistoryProps {
   onHistoryChange?: (hasData: boolean) => void;
 }
 
-export default function ImportHistory({ onHistoryChange }: ImportHistoryProps) {
+const SKELETON_ROWS = 6;
+const tableColumns = ['file', 'total', 'new', 'updated', 'failed', 'status', 'time', 'timestamp', 'actions'] as const;
+
+function ImportHistoryComponent({ onHistoryChange }: ImportHistoryProps, ref: ForwardedRef<ImportHistoryHandle>) {
   const [history, setHistory] = useState<ImportLog[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingMode, setLoadingMode] = useState<'initial' | 'overlay' | 'none'>('initial');
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [deleting, setDeleting] = useState<string | null>(null);
   const hasProcessingItemsRef = useRef(false);
+  const historyLengthRef = useRef(0);
 
-  const fetchHistory = useCallback(async (page: number = 1) => {
-    const fetchStartTime = performance.now();
-    
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const apiStartTime = performance.now();
-      const response = await axios.get(`${API_URL}/history`, {
-        params: { page, limit: 50 },
-      });
-      const apiEndTime = performance.now();
-      
-      const processStartTime = performance.now();
-      const historyData = response.data.data;
-      
-      // Batch state updates to reduce re-renders
-      const hasProcessing = historyData.some((item: ImportLog) => item.status === 'processing');
-      hasProcessingItemsRef.current = hasProcessing;
-      
-      // Update state in a single batch
-      setHistory(historyData);
-      setPagination(response.data.pagination);
-      
-      // Notify parent component about data availability (only if changed)
-      if (onHistoryChange) {
-        onHistoryChange(historyData.length > 0);
+  const fetchHistory = useCallback(
+    async (page: number = 1, options: { showLoading?: boolean } = {}) => {
+      const { showLoading = true } = options;
+      if (showLoading) {
+        setLoadingMode(historyLengthRef.current === 0 ? 'initial' : 'overlay');
       }
-      const processEndTime = performance.now();
-      
-      const fetchEndTime = performance.now();
-    } catch (err) {
-      const fetchEndTime = performance.now();
-      setError(err instanceof Error ? err.message : 'Failed to fetch import history');
-      if (onHistoryChange) {
-        onHistoryChange(false);
+
+      try {
+        setError(null);
+        const response = await axios.get(`${API_URL}/history`, {
+          params: { page, limit: 50 },
+        });
+
+        const historyData = response.data.data;
+        historyLengthRef.current = historyData.length;
+
+        const hasProcessing = historyData.some((item: ImportLog) => item.status === 'processing');
+        hasProcessingItemsRef.current = hasProcessing;
+
+        setHistory(historyData);
+        setPagination(response.data.pagination);
+
+        if (onHistoryChange) {
+          onHistoryChange(historyData.length > 0);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch import history');
+        if (onHistoryChange) {
+          onHistoryChange(false);
+        }
+      } finally {
+        if (showLoading) {
+          setLoadingMode('none');
+        }
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [onHistoryChange]);
+    },
+    [onHistoryChange]
+  );
 
   useEffect(() => {
     fetchHistory(currentPage);
   }, [currentPage, fetchHistory]);
 
   useEffect(() => {
-    // Set up polling - check every 3 seconds
-    // This ensures we catch status updates quickly for processing items
     const interval = setInterval(() => {
-      fetchHistory(currentPage);
+      fetchHistory(currentPage, { showLoading: false });
     }, 3000);
-    
+
     return () => clearInterval(interval);
   }, [currentPage, fetchHistory]);
 
@@ -169,7 +180,7 @@ export default function ImportHistory({ onHistoryChange }: ImportHistoryProps) {
     }
   };
 
-  const handleDeleteAll = async () => {
+  const handleDeleteAll = useCallback(async () => {
     if (!confirm('Are you sure you want to delete ALL import logs? This action cannot be undone.')) {
       return;
     }
@@ -191,177 +202,107 @@ export default function ImportHistory({ onHistoryChange }: ImportHistoryProps) {
     } finally {
       setDeleting(null);
     }
-  };
+  }, [onHistoryChange, fetchHistory]);
 
-  if (loading && history.length === 0) {
-    return <div style={{ padding: '20px', fontSize: '11px' }}>Loading...</div>;
-  }
+  useImperativeHandle(
+    ref,
+    () => ({
+      deleteAll: handleDeleteAll,
+    }),
+    [handleDeleteAll]
+  );
+
+  const renderSkeletonRows = () =>
+    Array.from({ length: SKELETON_ROWS }).map((_, rowIndex) => (
+      <tr key={`skeleton-${rowIndex}`} className="skeleton-row">
+        {tableColumns.map((column) => (
+          <td key={`${column}-${rowIndex}`}>
+            <div className={`skeleton-cell skeleton-cell--${column}`} />
+          </td>
+        ))}
+      </tr>
+    ));
 
   if (error) {
-    return <div style={{ padding: '20px', fontSize: '11px', color: '#ff0000' }}>Error: {error}</div>;
+    return <div className="alert alert--error">Error: {error}</div>;
   }
 
+  const showSkeleton = loadingMode === 'initial';
+  const showOverlay = loadingMode === 'overlay';
+
   return (
-    <div>
-      {history.length > 0 && (
-        <div style={{ marginBottom: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-          <button
-            onClick={handleDeleteAll}
-            disabled={deleting === 'all'}
-            style={{
-              padding: '6px 12px',
-              fontSize: '11px',
-              border: '1px solid #ff0000',
-              backgroundColor: deleting === 'all' ? '#f5f5f5' : '#ffffff',
-              color: deleting === 'all' ? '#999999' : '#ff0000',
-              cursor: deleting === 'all' ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {deleting === 'all' ? 'Deleting...' : 'Delete All'}
-          </button>
+    <div className={`table-card ${showOverlay ? 'table-card--loading' : ''}`}>
+      {showOverlay && (
+        <div className="table-loading-overlay">
+          <div className="spinner" />
+          <span>Refreshing data…</span>
         </div>
       )}
-      <div style={{ overflowX: 'auto' }}>
-        <table
-          style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '11px',
-            border: '1px solid #000000',
-          }}
-        >
+      <div className="table-wrapper">
+        <table>
           <thead>
-            <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #000000' }}>
-              <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #000000', fontWeight: 'normal' }}>
-                File Name
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Total
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                New
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Updated
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Failed
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Status
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Processing Time
-              </th>
-              <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Timestamp
-              </th>
-              <th style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000', fontWeight: 'normal' }}>
-                Actions
-              </th>
+            <tr>
+              <th>File Name</th>
+              <th>Total</th>
+              <th>New</th>
+              <th>Updated</th>
+              <th>Failed</th>
+              <th>Status</th>
+              <th>Processing Time</th>
+              <th>Timestamp</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {history.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ padding: '20px', textAlign: 'center', border: '1px solid #000000' }}>
-                  No import history found
-                </td>
-              </tr>
-            ) : (
-              history.map((log) => (
-                <tr key={log._id} style={{ borderBottom: '1px solid #cccccc' }}>
-                  <td style={{ padding: '8px', border: '1px solid #000000', maxWidth: '300px', wordBreak: 'break-word' }}>
-                    {log.fileName}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    {log.total}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    {log.new}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    {log.updated}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    {log.failed}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    <span style={{ color: getStatusColor(log.status) }}>
-                      {renderStatusLabel(log)}
-                    </span>
-                    {log.status === 'failed' && (
-                      <div
-                        style={{
-                          marginTop: '4px',
-                          fontSize: '10px',
-                          color: '#666666',
-                          textAlign: 'left',
-                        }}
-                      >
-                        {getFailureMessage(log)}
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    {formatTime(log.processingTime)}
-                  </td>
-                  <td style={{ padding: '8px', border: '1px solid #000000', fontSize: '10px' }}>
-                    {formatDate(log.timestamp)}
-                  </td>
-                  <td style={{ padding: '8px', textAlign: 'center', border: '1px solid #000000' }}>
-                    <button
-                      onClick={() => handleDelete(log._id)}
-                      disabled={deleting === log._id}
-                      style={{
-                        padding: '4px 8px',
-                        fontSize: '10px',
-                        border: '1px solid #ff0000',
-                        backgroundColor: deleting === log._id ? '#f5f5f5' : '#ffffff',
-                        color: deleting === log._id ? '#999999' : '#ff0000',
-                        cursor: deleting === log._id ? 'not-allowed' : 'pointer',
-                      }}
-                    >
-                      {deleting === log._id ? 'Deleting...' : 'Delete'}
-                    </button>
+            {showSkeleton
+              ? renderSkeletonRows()
+              : history.length === 0
+              ? (
+                <tr>
+                  <td colSpan={9} className="empty-state">
+                    No import history found
                   </td>
                 </tr>
-              ))
-            )}
+                )
+              : history.map((log) => (
+                  <tr key={log._id}>
+                    <td style={{ maxWidth: 320, wordBreak: 'break-word' }}>{log.fileName}</td>
+                    <td>{log.total}</td>
+                    <td>{log.new}</td>
+                    <td>{log.updated}</td>
+                    <td>{log.failed}</td>
+                    <td>
+                      <span className={`status-pill status-pill--${log.status}`}>
+                        {renderStatusLabel(log)}
+                      </span>
+                      {log.status === 'failed' && (
+                        <div className="failure-hint">{getFailureMessage(log)}</div>
+                      )}
+                    </td>
+                    <td>{formatTime(log.processingTime)}</td>
+                    <td className="timestamp">{formatDate(log.timestamp)}</td>
+                    <td className="actions-cell">
+                      <button onClick={() => handleDelete(log._id)} disabled={deleting === log._id}>
+                        {deleting === log._id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
           </tbody>
         </table>
       </div>
 
       {pagination && pagination.pages > 1 && (
-        <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-            disabled={currentPage === 1}
-            style={{
-              padding: '6px 12px',
-              fontSize: '11px',
-              border: '1px solid #000000',
-              backgroundColor: currentPage === 1 ? '#f5f5f5' : '#ffffff',
-              color: currentPage === 1 ? '#999999' : '#000000',
-              cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
-            }}
-          >
+        <div className="pagination">
+          <button onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={currentPage === 1}>
             Previous
           </button>
-          <span style={{ fontSize: '11px' }}>
+          <span>
             Page {pagination.page} of {pagination.pages}
           </span>
           <button
             onClick={() => setCurrentPage((prev) => Math.min(pagination.pages, prev + 1))}
             disabled={currentPage === pagination.pages}
-            style={{
-              padding: '6px 12px',
-              fontSize: '11px',
-              border: '1px solid #000000',
-              backgroundColor: currentPage === pagination.pages ? '#f5f5f5' : '#ffffff',
-              color: currentPage === pagination.pages ? '#999999' : '#000000',
-              cursor: currentPage === pagination.pages ? 'not-allowed' : 'pointer',
-            }}
           >
             Next
           </button>
@@ -370,4 +311,7 @@ export default function ImportHistory({ onHistoryChange }: ImportHistoryProps) {
     </div>
   );
 }
+
+const ImportHistory = forwardRef<ImportHistoryHandle, ImportHistoryProps>(ImportHistoryComponent);
+export default ImportHistory;
 
